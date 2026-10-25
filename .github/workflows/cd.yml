@@ -1,0 +1,116 @@
+name: CD Pipeline
+
+# Runs only after the "CI Pipeline" workflow finished on main.
+on:
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    types: [completed]
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/cicd-demo
+
+jobs:
+  # 1. Build the Docker image and push it to Docker Hub
+  build-and-push:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Compute image tag
+        id: meta
+        run: |
+          SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+          echo "tag=${SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Build Docker Image
+        run: docker build -t "$IMAGE_NAME:${{ steps.meta.outputs.tag }}" .
+
+      - name: Login to DockerHub
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: echo "$DOCKERHUB_TOKEN" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Push Image
+        run: docker push "$IMAGE_NAME:${{ steps.meta.outputs.tag }}"
+
+  # 2. Canary: run stable + new version behind a 90/10 gateway and monitor it
+  canary:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.build-and-push.outputs.tag }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Login to DockerHub
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: echo "$DOCKERHUB_TOKEN" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Choose stable and canary images
+        run: |
+          if docker pull "$IMAGE_NAME:stable"; then
+            echo "STABLE_IMAGE=$IMAGE_NAME:stable" >> "$GITHUB_ENV"
+          else
+            echo "First release: no stable image yet, using the candidate as stable"
+            echo "STABLE_IMAGE=$IMAGE_NAME:$TAG" >> "$GITHUB_ENV"
+          fi
+          echo "CANARY_IMAGE=$IMAGE_NAME:$TAG" >> "$GITHUB_ENV"
+          echo "CANARY_VERSION=$TAG" >> "$GITHUB_ENV"
+
+      - name: Deploy canary (10% of traffic)
+        run: docker compose -f deploy/docker-compose.canary.yml up -d --wait --wait-timeout 240
+
+      - name: Monitor canary
+        run: bash deploy/verify-canary.sh http://localhost:8080
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose -f deploy/docker-compose.canary.yml logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f deploy/docker-compose.canary.yml down -v
+
+  # 3. Gradual rollout: promote to 100% (needs manual approval via the "production" environment)
+  promote:
+    needs: [build-and-push, canary]
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      TAG: ${{ needs.build-and-push.outputs.tag }}
+    steps:
+      - name: Login to DockerHub
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: echo "$DOCKERHUB_TOKEN" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Promote image to stable and latest
+        run: |
+          docker pull "$IMAGE_NAME:$TAG"
+          docker tag  "$IMAGE_NAME:$TAG" "$IMAGE_NAME:stable"
+          docker tag  "$IMAGE_NAME:$TAG" "$IMAGE_NAME:latest"
+          docker push "$IMAGE_NAME:stable"
+          docker push "$IMAGE_NAME:latest"
+
+      - name: Deploy to 100% (Simulated)
+        run: echo "Rolling out $IMAGE_NAME:$TAG to all users... (replace with ssh / kubectl / cloud deploy)"
+
+  # 4. If the canary failed, nothing is promoted: users stay on the stable version
+  rollback:
+    needs: canary
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Canary failed - release aborted, the stable image is untouched."

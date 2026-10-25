@@ -1,0 +1,62 @@
+# Canary release stack:   nginx (90% -> stable, 10% -> canary)  +  stable app  +  canary app  +  PostgreSQL
+#
+#   STABLE_IMAGE=myuser/cicd-demo:stable CANARY_IMAGE=myuser/cicd-demo:abc1234 \
+#     docker compose -f deploy/docker-compose.canary.yml up -d --wait
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: postsdb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postsdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  stable:
+    image: ${STABLE_IMAGE:?set STABLE_IMAGE}
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/postsdb
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      APP_TRACK: stable
+      APP_VERSION: ${STABLE_VERSION:-stable}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8080/actuator/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  canary:
+    image: ${CANARY_IMAGE:?set CANARY_IMAGE}
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/postsdb
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      APP_TRACK: canary
+      APP_VERSION: ${CANARY_VERSION:-canary}
+    depends_on:
+      stable:
+        condition: service_healthy   # avoids two apps creating the schema at the same moment
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8080/actuator/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  gateway:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8080:80"
+    depends_on:
+      stable:
+        condition: service_healthy
+      canary:
+        condition: service_healthy

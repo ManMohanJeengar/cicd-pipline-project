@@ -1,0 +1,21 @@
+spring:
+  application:
+    name: cicd-demo
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/postsdb}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+app:
+  track: ${APP_TRACK:local}
+  version: ${APP_VERSION:dev}
