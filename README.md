@@ -193,3 +193,7 @@ gateway -> `verify-canary.sh` (error rate 0 and ~10 % of traffic on canary) -> w
   `openjdk:17` is deprecated on Docker Hub.
 * The final "Deploy (Simulated)" step in `cd.yml` is where `ssh`, `kubectl` or a cloud deploy command goes.
 * Next steps (Future Scope): Kubernetes (Argo Rollouts / Flagger for real canaries), Terraform, cloud CI/CD.
+
+
+
+test
