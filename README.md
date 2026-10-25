@@ -160,7 +160,8 @@ Widen the rollout by editing the weights in `deploy/nginx.conf` (e.g. `5` / `5` 
 1. Create a repo and push this project to `main`.
 2. Docker Hub -> Account settings -> Security -> create an access token.
 3. Repo -> Settings -> Secrets and variables -> Actions -> add
-   `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
+   `DOCKERHUB_USERNAME` (your Docker Hub username) and `DOCKERHUB_TOKEN`.
+   The CD workflow lowercases the username when building the Docker image name.
 4. (For manual approval) Settings -> Environments -> New environment `production`
    -> *Required reviewers* -> add yourself.
 
@@ -193,3 +194,7 @@ gateway -> `verify-canary.sh` (error rate 0 and ~10 % of traffic on canary) -> w
   `openjdk:17` is deprecated on Docker Hub.
 * The final "Deploy (Simulated)" step in `cd.yml` is where `ssh`, `kubectl` or a cloud deploy command goes.
 * Next steps (Future Scope): Kubernetes (Argo Rollouts / Flagger for real canaries), Terraform, cloud CI/CD.
+
+
+
+test
